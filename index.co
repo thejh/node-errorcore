@@ -1,0 +1,101 @@
+debuggr = require \_debugger
+async = require \async
+{ok: assert} = require \assert
+
+client = new debuggr.Client
+client.connect 5858, \127.0.0.1
+
+client.setProperty = (handle, property, value, cb) ->
+  command =
+    command: \evaluate
+    arguments:
+      expression: "$$handle$$[#{JSON.stringify property}] = #{JSON.stringify value}"
+      global: true
+      disable_break: true
+      additional_context: [name: \$$handle$$, handle: handle]
+  client.req command, cb
+
+client.lookup = (handles, cb) ->
+  result = []
+  <- async.forEach handles, (handle, cb) ->
+    (err, refsData) <- client.req command: \lookup, arguments: handles: [handle], includeSource: true
+    # FIXME ignores errors!
+    if not err
+      result.push refsData[(Object.keys refsData)[0]]
+    else
+      console.log "warning: lookup error for #{handle}"
+    cb!
+  cb result
+
+extractRefs = (obj, refsarr) ->
+  return if typeof obj is not \object or obj is null
+  refsarr or= []
+  # console.log "traversing..."
+  if typeof obj.ref is \number
+    refsarr.push obj.ref
+    # console.log "met #{obj.ref}"
+  for key, value in obj
+    extractRefs value, refsarr
+  refsarr
+
+arrSubtract = (array, blacklist) ->
+  for value of array
+    value if value not of blacklist
+
+arrUniq = (array) ->
+  result = []
+  for value of array
+    if value not of result
+      result.push value
+  result
+
+client.on \unhandledResponse, (body) ->
+  if not (body.type is \event and body.event is \exception)
+    console.log "##### INVALID MESSAGE: #{JSON.stringify body}"
+    return
+  console.log "breakpoint hit"
+  console.log "fetching a stacktrace..."
+  (err, btbody) <- client.req command: \backtrace
+  throw err if err
+  console.log "fetching scopes..."
+  assert (Array.isArray btbody.frames), "frames is a #{typeof btbody.frames}, btbody keys: #{(Object.keys btbody).join!}"
+  <- async.forEach btbody.frames, (frame, done) ->
+    assert (Array.isArray frame.scopes), 'scopes is not an array'
+    (_, frame.scopes) <- async.map frame.scopes, ({index: scopeNumber}, done) ->
+      console.log "requesting scope #{scopeNumber}:#{frame.index}"
+      (err, scope) <- client.req command: \scope, arguments: number: scopeNumber, frameNumber: frame.index
+      throw err if err
+      done null, scope
+    done!
+  console.log "fetching refs..."
+  btbody.refs = {}
+  fetchedRefs = []
+  unfetchedRefs = extractRefs btbody
+  <- fetchMoreRefs = (cb) ->
+    console.log "fetching #{unfetchedRefs.join! || \none}"
+    (refsData) <- client.lookup unfetchedRefs
+    unfetchedRefs := []
+    for key, handleData in refsData
+      fetchedRefs.push handleData.handle
+      btbody.refs[handleData.handle] = handleData
+      unfetchedRefs := unfetchedRefs.concat extractRefs handleData
+    unfetchedRefs := arrUniq arrSubtract unfetchedRefs, fetchedRefs
+    if unfetchedRefs.length > 0
+      fetchMoreRefs cb
+    else
+      cb!
+  console.log "attaching data..."
+  (err) <- client.setProperty body.body.exception.handle, \btbody, btbody
+  throw err if err
+  console.log "resuming..."
+  (err, body, res) <- client.reqContinue
+  throw err if err
+  console.log "resumed"
+
+client.on \ready, ->
+  (err, body, res) <- client.req command: \setexceptionbreak, arguments: type: \all, enabled: true
+  throw err if err
+  console.log "exception breakpoint set: #{JSON.stringify body}"
+  (err) <- client.req command: \continue
+  throw err if err
+  console.log "started"

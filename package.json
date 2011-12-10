@@ -1,0 +1,15 @@
+{
+  "author": "Jann Horn <jannhorn@googlemail.com>",
+  "name": "errorcore",
+  "version": "0.0.0",
+  "repository": {
+    "url": ""
+  },
+  "engines": {
+    "node": "~0.6.4"
+  },
+  "dependencies": {
+    "async": "*"
+  },
+  "devDependencies": {}
+}
