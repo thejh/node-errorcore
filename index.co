@@ -71,22 +71,25 @@ concatLines = (array, indent = 0) ->
     spaces + line
   .join '\n'
 
+printObject = (properties, indent) ->
+  concatLines (for {name, ref: value} of properties
+    if value?
+      if value.value?
+        "#{JSON.stringify name}: #{JSON.stringify value.value}"
+      else
+        moreData = if value.type is \function
+          " #{value.name or value.inferredName} at #{value.script?.name || '<unknown>'}:#{value.line}:#{value.column}"
+        else if value.properties?
+          keys = (property.name for property of value.properties)
+          " with keys #{keys.join ', '}"
+        else ""
+        "#{JSON.stringify name}: #{value.className}#{moreData}"
+  ), indent
+
 makeSupertrace = (btbody) ->
   concatLines (for frame of btbody.frames
     scopes = concatLines (for {object: {ref: scope}}, i of frame.scopes.slice 0, -2
-      locals = concatLines (for {name, ref: value} of scope.properties
-        if value?
-          if value.value?
-            "#{JSON.stringify name}: #{JSON.stringify value.value}"
-          else
-            moreData = if value.type is \function
-              " #{value.name or value.inferredName} at #{value.script?.name || '<unknown>'}:#{value.line}:#{value.column}"
-            else if value.properties?
-              keys = (property.name for property of value.properties)
-              " with keys #{keys.join ', '}"
-            else ""
-            "#{JSON.stringify name}: #{value.className}#{moreData}"
-      ), 2
+      locals = printObject scope.properties, 2
       concatLines ["scope #{i}", locals]
     ), 2
     concatLines [frame.text, scopes]
