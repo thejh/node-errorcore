@@ -49,6 +49,49 @@ arrUniq = (array) ->
       result.push value
   result
 
+unserializify = (obj, refs, handled) ->
+  return obj if typeof obj is not \object or obj is null
+  refs ||= obj.refs
+  handled ||= []
+  if obj.ref? and typeof obj.ref is \number
+    obj.ref = refs[obj.ref]
+  for key, value in obj
+    if handled.indexOf(value) is -1
+      handled.push value
+      unserializify value, refs, handled
+  delete obj.refs if obj.refs is refs
+  obj
+
+concatLines = (array, indent = 0) ->
+  lines = for text of array
+    for line of text.split '\n'
+      line
+  spaces = (' ' for n til indent).join ''
+  lines.map (line) ->
+    spaces + line
+  .join '\n'
+
+makeSupertrace = (btbody) ->
+  concatLines (for frame of btbody.frames
+    scopes = concatLines (for {object: {ref: scope}}, i of frame.scopes.slice 0, -2
+      locals = concatLines (for {name, ref: value} of scope.properties
+        if value?
+          if value.value?
+            "#{JSON.stringify name}: #{JSON.stringify value.value}"
+          else
+            moreData = if value.type is \function
+              " #{value.name or value.inferredName} at #{value.script?.name || '<unknown>'}:#{value.line}:#{value.column}"
+            else if value.properties?
+              keys = (property.name for property of value.properties)
+              " with keys #{keys.join ', '}"
+            else ""
+            "#{JSON.stringify name}: #{value.className}#{moreData}"
+      ), 2
+      concatLines ["scope #{i}", locals]
+    ), 2
+    concatLines [frame.text, scopes]
+  ), 4
+
 client.on \unhandledResponse, (body) ->
   if not (body.type is \event and body.event is \exception)
     console.log "##### INVALID MESSAGE: #{JSON.stringify body}"
@@ -85,7 +128,9 @@ client.on \unhandledResponse, (body) ->
     else
       cb!
   console.log "attaching data..."
-  (err) <- client.setProperty body.body.exception.handle, \btbody, btbody
+  realBtbody = unserializify JSON.parse JSON.stringify btbody
+  supertrace = makeSupertrace realBtbody
+  (err) <- client.setProperty body.body.exception.handle, \stack, supertrace
   throw err if err
   console.log "resuming..."
   (err, body, res) <- client.reqContinue

@@ -15,12 +15,5 @@ function f() {
 }
 
 setTimeout(function() {
-  try {
-    f()()
-  } catch (e) {
-    //console.log('error with '+Object.keys(e).join())
-    if (e.btbody) {
-      console.log(JSON.stringify(e.btbody))
-    }
-  }
+  f()()
 }, 10000)
